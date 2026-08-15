@@ -2,6 +2,8 @@
 
 LocalShot 是一款隐私优先的原生 macOS 截屏工具。截图、标注、复制和保存全部在本机完成。
 
+> **源码可见，但不是开源软件。** 本仓库保留全部权利，仅供查看与学习参考；未经作者书面许可，不得复制、修改、分发、商用或制作衍生作品。详见 [LICENSE](LICENSE)。
+
 ## 当前功能
 
 - 菜单栏应用
@@ -111,3 +113,9 @@ Scripts/audit_privacy.sh
 ```
 
 本地测试包使用临时签名。公开分发前必须改用 Developer ID Application 证书，并完成 Apple 公证。
+
+## 授权
+
+Copyright © 2026 Alex Tien. All rights reserved.
+
+本项目采用“源码可见、保留全部权利”的方式公开，不属于开源软件。GitHub 平台功能本身允许的查看与 fork 不代表获得代码使用、修改、再分发或商业授权。
