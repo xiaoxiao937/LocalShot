@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import ScreenCaptureKit
+import Vision
 
 enum CaptureMode {
     case region
@@ -106,10 +107,14 @@ final class CaptureCoordinator {
 
     private func startRegionCapture() async throws {
         let screen = screenUnderPointer()
-        // Window discovery is an enhancement to free-form selection, not a
-        // prerequisite. If ScreenCaptureKit cannot enumerate windows, the
-        // regular drag-to-select flow remains available.
-        let candidates = (try? await windowCandidates(on: screen)) ?? []
+        // Combine WindowServer geometry with rectangles detected directly from
+        // the pixels. The latter lets panels, cards and other window-shaped UI
+        // regions participate even when macOS does not expose them as windows.
+        async let systemCandidateTask = windowCandidates(on: screen)
+        async let visualCandidateTask = visualCandidates(on: screen)
+        let systemCandidates = (try? await systemCandidateTask) ?? []
+        let visualCandidates = (try? await visualCandidateTask) ?? []
+        let candidates = mergeCandidates(visualCandidates + systemCandidates, within: screen.frame.size)
         let controller = RegionCaptureController(screen: screen, windowCandidates: candidates)
         regionController = controller
         controller.onComplete = { [weak self] selection in
@@ -196,6 +201,80 @@ final class CaptureCoordinator {
             guard seenFrames.insert(frameKey).inserted else { return nil }
             return localFrame
         }
+    }
+
+    private func visualCandidates(on screen: NSScreen) async throws -> [CGRect] {
+        guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+            throw CaptureError.displayNotFound
+        }
+        let displayID = CGDirectDisplayID(number.uint32Value)
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
+            throw CaptureError.displayNotFound
+        }
+
+        // One logical-pixel sample is sufficient for geometric detection and
+        // avoids running Vision over a full Retina screenshot.
+        let pointSize = screen.frame.size
+        let configuration = SCStreamConfiguration()
+        configuration.width = max(1, Int(ceil(pointSize.width)))
+        configuration.height = max(1, Int(ceil(pointSize.height)))
+        configuration.captureResolution = .best
+        configuration.scalesToFit = true
+        configuration.preservesAspectRatio = true
+        configuration.showsCursor = false
+        configuration.ignoreShadowsSingleWindow = true
+
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+
+        let request = VNDetectRectanglesRequest()
+        request.maximumObservations = 48
+        request.minimumConfidence = 0.35
+        request.minimumAspectRatio = 0.12
+        request.maximumAspectRatio = 1
+        request.quadratureTolerance = 12
+        request.minimumSize = 0.035
+        try VNImageRequestHandler(cgImage: image, orientation: .up, options: [:]).perform([request])
+
+        let displayBounds = CGRect(origin: .zero, size: pointSize)
+        let displayArea = max(1, pointSize.width * pointSize.height)
+        return (request.results ?? []).compactMap { observation in
+            let box = observation.boundingBox
+            let candidate = CGRect(
+                x: box.minX * pointSize.width,
+                y: (1 - box.maxY) * pointSize.height,
+                width: box.width * pointSize.width,
+                height: box.height * pointSize.height
+            ).integral.intersection(displayBounds)
+            let area = candidate.width * candidate.height
+            guard !candidate.isNull,
+                  candidate.width >= 100,
+                  candidate.height >= 60,
+                  area >= displayArea * 0.0075,
+                  area <= displayArea * 0.97 else {
+                return nil
+            }
+            return candidate
+        }
+    }
+
+    private func mergeCandidates(_ candidates: [CGRect], within size: CGSize) -> [CGRect] {
+        let bounds = CGRect(origin: .zero, size: size)
+        var merged: [CGRect] = []
+        for candidate in candidates {
+            let rect = candidate.integral.intersection(bounds)
+            guard !rect.isNull, rect.width >= 40, rect.height >= 40 else { continue }
+            let isDuplicate = merged.contains { existing in
+                let intersection = existing.intersection(rect)
+                guard !intersection.isNull else { return false }
+                let intersectionArea = intersection.width * intersection.height
+                let unionArea = existing.width * existing.height + rect.width * rect.height - intersectionArea
+                return unionArea > 0 && intersectionArea / unionArea >= 0.92
+            }
+            if !isDuplicate { merged.append(rect) }
+        }
+        return merged
     }
 
     private func captureRegion(_ selection: CGRect, on screen: NSScreen) async throws -> CapturedImage {

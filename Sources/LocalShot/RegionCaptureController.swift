@@ -24,7 +24,14 @@ final class RegionCaptureController {
             defer: false,
             screen: screen
         )
-        selectionView = RegionSelectionView(windowCandidates: windowCandidates)
+        let visible = screen.visibleFrame
+        let safeInsets = NSEdgeInsets(
+            top: max(0, screen.frame.maxY - visible.maxY),
+            left: max(0, visible.minX - screen.frame.minX),
+            bottom: max(0, visible.minY - screen.frame.minY),
+            right: max(0, screen.frame.maxX - visible.maxX)
+        )
+        selectionView = RegionSelectionView(windowCandidates: windowCandidates, safeInsets: safeInsets)
         window.contentView = selectionView
         window.level = .screenSaver
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -101,6 +108,7 @@ final class RegionSelectionView: NSView {
     var onCancel: (() -> Void)?
 
     private let windowCandidates: [CGRect]
+    private let safeInsets: NSEdgeInsets
     private var startPoint: CGPoint?
     private var currentPoint: CGPoint?
     private var hoveredWindow: CGRect?
@@ -109,8 +117,9 @@ final class RegionSelectionView: NSView {
     private var didComplete = false
     private var trackingArea: NSTrackingArea?
 
-    init(windowCandidates: [CGRect]) {
+    init(windowCandidates: [CGRect], safeInsets: NSEdgeInsets = .init()) {
         self.windowCandidates = windowCandidates
+        self.safeInsets = safeInsets
         super.init(frame: .zero)
     }
 
@@ -186,11 +195,15 @@ final class RegionSelectionView: NSView {
             .kern: 0.15
         ]
         let size = text.size(withAttributes: attributes)
+        let pillSize = CGSize(width: ceil(size.width) + 32, height: ceil(size.height) + 18)
+        let minimumX = bounds.minX + safeInsets.left + 10
+        let maximumX = bounds.maxX - safeInsets.right - pillSize.width - 10
+        let centeredX = floor(bounds.midX - pillSize.width / 2)
         let pillRect = CGRect(
-            x: floor(bounds.midX - size.width / 2 - 16),
-            y: 18,
-            width: ceil(size.width) + 32,
-            height: ceil(size.height) + 18
+            x: maximumX >= minimumX ? min(max(centeredX, minimumX), maximumX) : centeredX,
+            y: bounds.minY + safeInsets.top + 12,
+            width: pillSize.width,
+            height: pillSize.height
         )
 
         NSGraphicsContext.saveGraphicsState()
@@ -222,9 +235,12 @@ final class RegionSelectionView: NSView {
         ]
         let size = text.size(withAttributes: attributes)
         let labelSize = CGSize(width: ceil(size.width) + 14, height: ceil(size.height) + 8)
+        let safeTop = bounds.minY + safeInsets.top + 6
+        let safeLeft = bounds.minX + safeInsets.left + 6
+        let safeRight = bounds.maxX - safeInsets.right - 6
         var origin = CGPoint(x: selection.minX, y: selection.minY - labelSize.height - 6)
-        if origin.y < 6 { origin.y = selection.minY + 6 }
-        origin.x = min(max(6, origin.x), max(6, bounds.maxX - labelSize.width - 6))
+        if origin.y < safeTop { origin.y = selection.minY + 6 }
+        origin.x = min(max(safeLeft, origin.x), max(safeLeft, safeRight - labelSize.width))
         let labelRect = CGRect(origin: origin, size: labelSize)
 
         NSColor.black.withAlphaComponent(0.66).setFill()
@@ -255,7 +271,9 @@ final class RegionSelectionView: NSView {
     }
 
     private func windowCandidate(at point: CGPoint) -> CGRect? {
-        windowCandidates.first(where: { $0.contains(point) })
+        windowCandidates
+            .filter { $0.contains(point) }
+            .min { lhs, rhs in lhs.width * lhs.height < rhs.width * rhs.height }
     }
 
     private func pointInBounds(from event: NSEvent) -> CGPoint {

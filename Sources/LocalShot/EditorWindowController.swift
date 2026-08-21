@@ -5,6 +5,10 @@ import Vision
 enum EditorTool: Int, CaseIterable {
     case move, line, arrow, rectangle, ellipse, pen, text, mosaic, crop
 
+    static let toolbarTools: [EditorTool] = [
+        .move, .text, .arrow, .rectangle, .pen, .mosaic, .crop
+    ]
+
     var title: String {
         switch self {
         case .move: return "移动"
@@ -53,6 +57,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     private let widthSlider = NSSlider(value: 4, minValue: 1, maxValue: 20, target: nil, action: nil)
     private var toolButtons: [NSButton] = []
     private var closeKeyMonitor: Any?
+    private var textResultController: TextRecognitionWindowController?
     private lazy var pinCloseButton: NSButton = {
         let image = NSImage(
             systemSymbolName: "xmark",
@@ -127,8 +132,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     private func buildUI() {
         let toolGroup = toolbarGroup()
-        for tool in EditorTool.allCases {
-            let button = iconButton(symbol: tool.symbolName, tip: "\(tool.rawValue + 1) · \(tool.title)", action: #selector(selectTool(_:)))
+        for (index, tool) in EditorTool.toolbarTools.enumerated() {
+            let button = iconButton(symbol: tool.symbolName, tip: "\(index + 1) · \(tool.title)", action: #selector(selectTool(_:)))
             button.tag = tool.rawValue
             button.setButtonType(.toggle)
             button.state = tool == .move ? .on : .off
@@ -141,8 +146,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         colorWell.target = self
         colorWell.action = #selector(styleChanged)
         colorWell.toolTip = "标注颜色"
+        colorWell.colorWellStyle = .minimal
         colorWell.translatesAutoresizingMaskIntoConstraints = false
-        colorWell.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        colorWell.widthAnchor.constraint(equalToConstant: 28).isActive = true
         colorWell.heightAnchor.constraint(equalToConstant: 28).isActive = true
         styleGroup.addArrangedSubview(colorWell)
 
@@ -292,10 +298,14 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 showFeedback(title: "没有识别到文字", message: "请换一个包含清晰文字的区域再试。")
                 return
             }
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-            showFeedback(title: "文字已复制", message: "识别结果已放入剪贴板。")
+            let controller = TextRecognitionWindowController(text: text)
+            controller.onClose = { [weak self, weak controller] in
+                guard let self, self.textResultController === controller else { return }
+                self.textResultController = nil
+            }
+            textResultController?.close()
+            textResultController = controller
+            controller.showWindow(nil)
         } catch {
             showFeedback(title: "文字识别失败", message: error.localizedDescription)
         }
@@ -401,12 +411,22 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                 return nil
             }
             if !self.canvas.isEnteringText,
+               self.canvas.isEditing,
+               (event.keyCode == 36 || event.keyCode == 76),
+               !flags.contains(.command),
+               !flags.contains(.control),
+               !flags.contains(.option) {
+                self.finishEditing()
+                return nil
+            }
+            if !self.canvas.isEnteringText,
                !flags.contains(.command),
                !flags.contains(.control),
                !flags.contains(.option),
                let character = event.charactersIgnoringModifiers,
                let number = Int(character),
-               let tool = EditorTool(rawValue: number - 1) {
+               EditorTool.toolbarTools.indices.contains(number - 1) {
+                let tool = EditorTool.toolbarTools[number - 1]
                 self.setTool(tool)
                 return nil
             }
@@ -451,6 +471,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
             self.closeKeyMonitor = nil
         }
         toolbarPanel.orderOut(nil)
+        textResultController?.close()
+        textResultController = nil
         let callback = onClose
         onClose = nil
         callback?()
@@ -1120,5 +1142,147 @@ private final class InlineAnnotationTextField: NSTextField {
 
     override func cancelOperation(_ sender: Any?) {
         onCancel?()
+    }
+}
+
+@MainActor
+private final class TextRecognitionWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate {
+    var onClose: (() -> Void)?
+
+    private let textView = NSTextView()
+    private let copySelectionButton = NSButton(title: "复制所选", target: nil, action: nil)
+
+    init(text: String) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "提取文字"
+        window.minSize = NSSize(width: 380, height: 260)
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        window.delegate = self
+        buildUI(text: text)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        window?.center()
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeFirstResponder(textView)
+    }
+
+    private func buildUI(text: String) {
+        guard let contentView = window?.contentView else { return }
+
+        let heading = NSTextField(labelWithString: "识别结果")
+        heading.font = .systemFont(ofSize: 15, weight: .semibold)
+
+        let guidance = NSTextField(labelWithString: "拖动选择需要的文字，再点“复制所选”；也可以复制全部。")
+        guidance.font = .systemFont(ofSize: 12)
+        guidance.textColor = .secondaryLabelColor
+
+        textView.string = text
+        textView.font = .systemFont(ofSize: 14)
+        textView.textColor = .labelColor
+        textView.backgroundColor = .textBackgroundColor
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.allowsUndo = false
+        textView.textContainerInset = NSSize(width: 12, height: 12)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.delegate = self
+
+        let scrollView = NSScrollView()
+        scrollView.borderType = .noBorder
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
+        textView.frame = scrollView.contentView.bounds
+        scrollView.documentView = textView
+
+        copySelectionButton.target = self
+        copySelectionButton.action = #selector(copySelection)
+        copySelectionButton.bezelStyle = .rounded
+        copySelectionButton.isEnabled = false
+
+        let copyAllButton = NSButton(title: "复制全部", target: self, action: #selector(copyAll))
+        copyAllButton.bezelStyle = .rounded
+
+        let closeButton = NSButton(title: "关闭", target: self, action: #selector(closeResult))
+        closeButton.bezelStyle = .rounded
+
+        let spacer = NSView()
+        let buttonRow = NSStackView(views: [copySelectionButton, copyAllButton, spacer, closeButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.spacing = 8
+
+        let stack = NSStackView(views: [heading, guidance, scrollView, buttonRow])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(stack)
+
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+            scrollView.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            buttonRow.widthAnchor.constraint(equalTo: stack.widthAnchor)
+        ])
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        copySelectionButton.isEnabled = textView.selectedRange().length > 0
+    }
+
+    @objc private func copySelection() {
+        let range = textView.selectedRange()
+        guard range.length > 0,
+              let swiftRange = Range(range, in: textView.string) else { return }
+        copyToPasteboard(String(textView.string[swiftRange]))
+    }
+
+    @objc private func copyAll() {
+        copyToPasteboard(textView.string)
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+    }
+
+    @objc private func closeResult() { close() }
+
+    func windowWillClose(_ notification: Notification) {
+        let callback = onClose
+        onClose = nil
+        callback?()
     }
 }

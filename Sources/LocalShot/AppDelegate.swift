@@ -11,11 +11,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenuBar()
         configureHotKeys()
-        showWelcomeIfNeeded()
+        if !showWelcomeIfNeeded() {
+            openSettings()
+        }
     }
 
-    private func showWelcomeIfNeeded() {
-        guard !settings.hasShownWelcome else { return }
+    @discardableResult
+    private func showWelcomeIfNeeded() -> Bool {
+        guard !settings.hasShownWelcome else { return false }
         let controller = WelcomeWindowController()
         controller.onFinish = { [weak self] in
             self?.settings.hasShownWelcome = true
@@ -25,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
+        return true
     }
 
     private func configureMenuBar() {
@@ -39,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(menuItem("截取全屏", action: #selector(captureFullScreen)))
         menu.addItem(.separator())
         menu.addItem(menuItem("打开最近截图", action: #selector(openRecent)))
-        menu.addItem(menuItem("设置…", action: #selector(openSettings), shortcut: ","))
+        menu.addItem(menuItem("设置…", action: #selector(openSettings), shortcut: "0"))
         menu.addItem(menuItem("隐私说明", action: #selector(showPrivacy)))
         menu.addItem(.separator())
         menu.addItem(menuItem("退出 LocalShot", action: #selector(quit), shortcut: "q"))
@@ -59,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 switch action {
                 case .region: self?.startCapture(.region)
                 case .fullScreen: self?.startCapture(.fullScreen)
+                case .settings: self?.openSettings()
                 }
             }
         }
@@ -97,6 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openSettings()
+        return true
+    }
 
     private func showAlert(title: String, message: String) {
         NSApp.activate(ignoringOtherApps: true)

@@ -181,7 +181,7 @@ final class SettingsWindowController: NSWindowController {
     init(settings: SettingsStore) {
         self.settings = settings
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 330),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 350),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -209,6 +209,10 @@ final class SettingsWindowController: NSWindowController {
 
         stack.addArrangedSubview(shortcutRow("区域截图", action: .region, keyCode: settings.regionKeyCode))
         stack.addArrangedSubview(shortcutRow("全屏截图", action: .fullScreen, keyCode: settings.fullScreenKeyCode))
+
+        let recoveryShortcut = NSTextField(labelWithString: "打开设置：⌘⇧0（隐藏菜单栏图标后仍可使用）")
+        recoveryShortcut.textColor = .secondaryLabelColor
+        stack.addArrangedSubview(recoveryShortcut)
 
         stack.addArrangedSubview(checkBox("保存时询问位置", state: settings.askSaveLocation, action: #selector(toggleAsk(_:))))
         stack.addArrangedSubview(checkBox("全屏截图包含鼠标指针", state: settings.includeCursor, action: #selector(toggleCursor(_:))))
@@ -282,6 +286,7 @@ final class SettingsWindowController: NSWindowController {
         switch action {
         case .region: settings.regionKeyCode = code
         case .fullScreen: settings.fullScreenKeyCode = code
+        case .settings: return
         }
         HotKeyManager.shared.register(settings: settings)
     }

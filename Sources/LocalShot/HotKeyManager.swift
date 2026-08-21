@@ -4,6 +4,7 @@ import Carbon
 enum HotKeyAction: UInt32 {
     case region = 1
     case fullScreen = 3
+    case settings = 10
 }
 
 @MainActor
@@ -48,6 +49,9 @@ final class HotKeyManager {
         unregisterAll()
         register(action: .region, keyCode: UInt32(settings.regionKeyCode))
         register(action: .fullScreen, keyCode: UInt32(settings.fullScreenKeyCode))
+        // Fixed recovery shortcut. It remains available even when the user
+        // hides the menu-bar item and the app has no Dock icon.
+        register(action: .settings, keyCode: 29)
     }
 
     private func register(action: HotKeyAction, keyCode: UInt32) {
