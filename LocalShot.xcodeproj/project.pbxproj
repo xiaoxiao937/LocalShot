@@ -16,6 +16,9 @@
 		A10000000000000000000107 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000007 /* SettingsStore.swift */; };
 		A10000000000000000000108 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000A /* PrivacyInfo.xcprivacy */; };
 		A10000000000000000000109 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000010 /* Assets.xcassets */; };
+		A10000000000000000000110 /* TextRecognitionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* TextRecognitionService.swift */; };
+		A10000000000000000000111 /* CaptureAppearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* CaptureAppearance.swift */; };
+		A10000000000000000000112 /* LongScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* LongScreenshot.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -35,6 +38,9 @@
 		A1000000000000000000000E /* SECURITY_AUDIT.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = SECURITY_AUDIT.md; sourceTree = "<group>"; };
 		A1000000000000000000000F /* LocalShot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LocalShot.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A10000000000000000000011 /* TextRecognitionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextRecognitionService.swift; sourceTree = "<group>"; };
+		A10000000000000000000012 /* CaptureAppearance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureAppearance.swift; sourceTree = "<group>"; };
+		A10000000000000000000013 /* LongScreenshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LongScreenshot.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -98,6 +104,9 @@
 				A10000000000000000000005 /* HotKeyManager.swift */,
 				A10000000000000000000006 /* RegionCaptureController.swift */,
 				A10000000000000000000007 /* SettingsStore.swift */,
+				A10000000000000000000011 /* TextRecognitionService.swift */,
+				A10000000000000000000012 /* CaptureAppearance.swift */,
+				A10000000000000000000013 /* LongScreenshot.swift */,
 			);
 			path = LocalShot;
 			sourceTree = "<group>";
@@ -188,6 +197,9 @@
 				A10000000000000000000105 /* HotKeyManager.swift in Sources */,
 				A10000000000000000000106 /* RegionCaptureController.swift in Sources */,
 				A10000000000000000000107 /* SettingsStore.swift in Sources */,
+				A10000000000000000000110 /* TextRecognitionService.swift in Sources */,
+				A10000000000000000000111 /* CaptureAppearance.swift in Sources */,
+				A10000000000000000000112 /* LongScreenshot.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -224,12 +236,12 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 45;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Config/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 0.1.12;
+				MARKETING_VERSION = 0.3.13;
 				PRODUCT_BUNDLE_IDENTIFIER = com.localshot.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -245,12 +257,12 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 45;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Config/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
-				MARKETING_VERSION = 0.1.12;
+				MARKETING_VERSION = 0.3.13;
 				PRODUCT_BUNDLE_IDENTIFIER = com.localshot.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

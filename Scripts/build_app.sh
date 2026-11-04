@@ -16,7 +16,9 @@ export XDG_CACHE_HOME="$BUILD_DIR/cache"
 /bin/mkdir -p "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_MODULECACHE_OVERRIDE" "$XDG_CACHE_HOME"
 
 cd "$PROJECT_DIR"
+/bin/zsh "$PROJECT_DIR/Scripts/audit_capture_safety.sh"
 /usr/bin/swift build --disable-sandbox -c release -debug-info-format none --enable-experimental-strip-products --scratch-path "$BUILD_DIR"
+"$BUILD_DIR/release/LocalShot" --smoke-test-settings
 
 /bin/rm -rf "$APP_DIR"
 /bin/mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
@@ -37,7 +39,12 @@ ASSET_OUTPUT="$BUILD_DIR/asset-output"
 /bin/cp "$ASSET_OUTPUT/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 /bin/cp "$ASSET_OUTPUT/Assets.car" "$APP_DIR/Contents/Resources/Assets.car"
 
-/usr/bin/codesign --force --sign - --options runtime --entitlements "$PROJECT_DIR/Config/LocalShot.entitlements" "$APP_DIR"
+SIGNING_IDENTITY="${LOCALSHOT_SIGN_IDENTITY:--}"
+SIGNING_OPTIONS=()
+if [[ "$SIGNING_IDENTITY" != "-" ]]; then
+    SIGNING_OPTIONS+=(--timestamp)
+fi
+/usr/bin/codesign --force --sign "$SIGNING_IDENTITY" "${SIGNING_OPTIONS[@]}" --options runtime --entitlements "$PROJECT_DIR/Config/LocalShot.entitlements" "$APP_DIR"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
 echo "$APP_DIR"
