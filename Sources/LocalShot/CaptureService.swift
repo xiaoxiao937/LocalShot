@@ -255,7 +255,9 @@ final class CaptureCoordinator: NSObject {
         if let suppliedContent {
             content = suppliedContent
         } else {
-            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            // Off-screen windows cannot affect this frame. Avoid enumerating
+            // them on every full-screen capture or long-screenshot continuation.
+            content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         }
         try Task.checkCancellation()
         guard let display = content.displays.first(where: { $0.displayID == displayID }) else {
@@ -285,7 +287,8 @@ final class CaptureCoordinator: NSObject {
         guard let screen = screenUnderPointer() else { throw CaptureError.displayNotFound }
         // Prepare window metadata before freezing. Reuse it for capture so
         // there is no second async enumeration between freeze and first paint.
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        // Fetch visible windows only; a large off-screen list delays the overlay.
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         try Task.checkCancellation()
         guard requestGeneration == generation else { return }
         let candidates = (try? windowCandidates(on: screen, in: content)) ?? []

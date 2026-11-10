@@ -302,6 +302,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         colorWell.color = settings.annotationColor
         colorWell.target = self
         colorWell.action = #selector(styleChanged)
+        colorWell.onColorChange = { [weak self] color in self?.applyColorSelection(color) }
         colorWell.toolTip = "标注颜色"
         colorWell.colorWellStyle = .minimal
         colorWell.onPaletteClose = { [weak self] in
@@ -431,7 +432,8 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func refreshStyleContext() {
-        let selectionIsContext = canvas.tool == .move && canvas.selectedAnnotationTool != nil
+        let selectionIsContext = canvas.isEnteringText
+            || (canvas.tool == .move && canvas.selectedAnnotationTool != nil)
         let color = selectionIsContext ? (canvas.selectedAnnotationColor ?? canvas.strokeColor) : canvas.strokeColor
         if !colorWell.color.isEqual(color) { colorWell.color = color }
         let width = Double(selectionIsContext ? (canvas.selectedAnnotationStrokeWidth ?? canvas.strokeWidth) : canvas.strokeWidth)
@@ -443,17 +445,30 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func styleChanged(_ sender: NSControl) {
+        if sender === colorWell {
+            applyColorSelection(colorWell.color)
+            return
+        }
         canvas.endKeyboardNudgeGroup()
         if canvas.tool == .move, canvas.selectedAnnotationTool != nil {
-            if sender === colorWell { canvas.applySelectedStyle(color: colorWell.color) }
-            else if sender === widthSlider { canvas.applySelectedStyle(strokeWidth: widthSlider.doubleValue) }
-        } else if sender === colorWell {
-            canvas.strokeColor = colorWell.color
-            settings.annotationColor = canvas.strokeColor
+            if sender === widthSlider { canvas.applySelectedStyle(strokeWidth: widthSlider.doubleValue) }
         } else if sender === widthSlider {
             settings.setAnnotationStrokeWidth(widthSlider.doubleValue, for: canvas.tool)
             canvas.strokeWidth = settings.annotationStrokeWidth(for: canvas.tool)
         }
+    }
+
+    private func applyColorSelection(_ color: NSColor) {
+        guard !isClosing, canvas.isEditing else { return }
+        canvas.endKeyboardNudgeGroup()
+        // A chosen color also becomes the next annotation's color, even when
+        // the current selection is existing text rather than a drawing tool.
+        canvas.strokeColor = color
+        settings.annotationColor = color
+        if canvas.tool == .move || canvas.tool == .text || canvas.isEnteringText {
+            canvas.applySelectedStyle(color: color)
+        }
+        refreshStyleContext()
     }
 
     private func restoreFocusAfterPalette() {
@@ -1088,6 +1103,9 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
                   self.window?.isKeyWindow != true,
                   self.window?.attachedSheet == nil else { return }
             if NSApp.isActive, NSApp.keyWindow === self.toolbarPanel { return }
+            // Transient popovers can briefly have no key window. That gap is
+            // not an application switch and must not tear down the color UI.
+            if NSApp.isActive, self.colorWell.isPaletteOpen, NSApp.keyWindow == nil { return }
             if NSApp.isActive, let paletteWindow = self.colorWell.paletteWindow,
                NSApp.keyWindow === paletteWindow { return }
             if NSApp.isActive, NSApp.keyWindow === self.textResultController?.window { return }
@@ -1284,13 +1302,7 @@ final class EditorCanvasView: NSView, NSTextViewDelegate, NSUserInterfaceValidat
     }
     var strokeColor: NSColor = .systemRed {
         didSet {
-            if let inlineTextView {
-                inlineTextView.textColor = strokeColor
-                inlineTextView.insertionPointColor = strokeColor
-                var attributes = inlineTextView.typingAttributes
-                attributes[.foregroundColor] = strokeColor
-                inlineTextView.typingAttributes = attributes
-            }
+            applyInlineColor(strokeColor)
         }
     }
     var strokeWidth: CGFloat = 4
@@ -1434,15 +1446,8 @@ final class EditorCanvasView: NSView, NSTextViewDelegate, NSUserInterfaceValidat
 
     func applySelectedStyle(color: NSColor? = nil, strokeWidth: CGFloat? = nil) {
         endKeyboardNudgeGroup()
-        if let inlineTextView {
-            if let color, inlineTextView.textColor?.isEqual(color) != true {
-                inlineTextView.textColor = color
-                inlineTextView.insertionPointColor = color
-                var attributes = inlineTextView.typingAttributes
-                attributes[.foregroundColor] = color
-                inlineTextView.typingAttributes = attributes
-                notifySelectionContextChange()
-            }
+        if inlineTextView != nil {
+            if let color { applyInlineColor(color) }
             return
         }
         guard let index = selectedAnnotationIndex, annotations.indices.contains(index) else { return }
@@ -1480,6 +1485,27 @@ final class EditorCanvasView: NSView, NSTextViewDelegate, NSUserInterfaceValidat
         annotations[index] = after
         recordHistory(.replaced(index: index, before: before, after: after))
         invalidateTransition(from: oldBounds, to: selectionDisplayBounds(at: index))
+        notifySelectionContextChange()
+    }
+
+    private func applyInlineColor(_ requestedColor: NSColor) {
+        guard let textView = inlineTextView,
+              let color = requestedColor.usingColorSpace(.sRGB) else { return }
+        let previous = textView.textColor ?? strokeColor
+        guard previous.usingColorSpace(.sRGB)?.isEqual(color) != true else { return }
+        textView.breakUndoCoalescing()
+        textView.undoManager?.registerUndo(withTarget: textView) { [weak self] originalView in
+            MainActor.assumeIsolated {
+                guard let self, self.inlineTextView === originalView else { return }
+                self.applyInlineColor(previous)
+            }
+        }
+        textView.undoManager?.setActionName("文字颜色")
+        textView.textColor = color
+        textView.insertionPointColor = color
+        var attributes = textView.typingAttributes
+        attributes[.foregroundColor] = color
+        textView.typingAttributes = attributes
         notifySelectionContextChange()
     }
     var hasSelectedText: Bool {

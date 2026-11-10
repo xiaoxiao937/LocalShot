@@ -194,6 +194,33 @@ if [[ $(/usr/bin/grep -Fc 'SCScreenshotManager.captureImage' "$COORDINATOR_SOURC
     fail "截图流程绕过统一的单帧捕获入口"
 fi
 for requirement in \
+    'NSColorPanel.colorDidChangeNotification' \
+    'systemColorRelay.start(panel: panel)' \
+    'systemColorRelay.stop()' \
+    'onColorChange(resolved)' \
+    'let panel = CapturePalettePanel(' \
+    'override func mouseDown(with event: NSEvent)' \
+    'NSEvent.removeMonitor(paletteClickMonitor)'; do
+    if ! /usr/bin/grep -Fq "$requirement" "$APPEARANCE_SOURCE"; then
+        fail "小色盘或系统颜色窗口缺少显式回传及清理：$requirement"
+    fi
+done
+if /usr/bin/grep -Rq 'ColorDiagnostics\|LocalShotColorTrace\|diagnose-color' "$PROJECT_DIR/Sources/LocalShot"; then
+    fail "临时颜色事件诊断尚未移除"
+fi
+for requirement in \
+    'private func applyColorSelection(_ color: NSColor)' \
+    'private func applyInlineColor(_ requestedColor: NSColor)' \
+    'self.inlineTextView === originalView'; do
+    if ! /usr/bin/grep -Fq "$requirement" "$EDITOR_SOURCE"; then
+        fail "文字颜色或原生撤销缺少实现：$requirement"
+    fi
+done
+if [[ $(/usr/bin/grep -Fc 'SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)' "$COORDINATOR_SOURCE") -ne 2 ]] ||
+   /usr/bin/grep -Fq 'onScreenWindowsOnly: false' "$COORDINATOR_SOURCE"; then
+    fail "截图准备或长截图续拍重新枚举了不可见窗口"
+fi
+for requirement in \
     'styleMask: [.borderless, .nonactivatingPanel]' \
     'CaptureAppearance.surfaceBackground(' \
     'action: #selector(cancelCapture)' \
@@ -316,6 +343,7 @@ echo "截图安全审计通过"
 echo "- 无应用级截图 modal"
 echo "- 无 screenSaver 级遮罩"
 echo "- 区域截图仅在遮罩出现前捕获一次整屏"
+echo "- 区域、全屏与长截图续拍仅请求可见窗口，不枚举屏幕外窗口"
 echo "- 自动框选仅识别系统窗口；框选画面与结果来自同一张冻结底片"
 echo "- 首次圈定立即进入编辑；移动工具/空格平移取景，贴图仍独立移动"
 echo "- 普通截图直接裁切原始 CGImage 像素，不二次截图、不重采样"
@@ -324,6 +352,7 @@ echo "- 标注期间保留冻结背景与暗层，失焦自动隐藏且不接收
 echo "- 编辑背景固定均匀暗层，明亮截图和边框只由前景窗口绘制；拖动不刷新背景镂空"
 echo "- 默认工具可持久化配置；方框支持移动、角点缩放且无蓝色虚线"
 echo "- 文字输入、色盘、OCR 与框选提示复用玻璃材质；提示不在绘制中增删或移动"
+echo "- 小色盘直接传递颜色；系统颜色窗口显式回传、去重并在关闭时解绑"
 echo "- 文字框拖宽度自动换行；OCR 后台运行、可取消并按阅读顺序输出"
 echo "- 文字输入随内容伸缩、手动宽度独立保留，末尾空行纳入高度且不绘制大号占位提示"
 echo "- Shift+Return 明确插入换行，普通 Return 完成文字，候选优先交给输入法"

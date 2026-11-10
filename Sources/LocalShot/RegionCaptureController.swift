@@ -402,6 +402,11 @@ final class RegionCaptureController: NSObject {
         colorWell.color = settings.annotationColor
         colorWell.target = self
         colorWell.action = #selector(styleChanged(_:))
+        colorWell.onColorChange = { [weak self] color in
+            guard let self, !self.didFinish else { return }
+            self.selectionView.activeColor = color
+            self.settings.annotationColor = color
+        }
         colorWell.toolTip = "标注颜色"
         colorWell.onPaletteClose = { [weak self] in
             DispatchQueue.main.async { [weak self] in

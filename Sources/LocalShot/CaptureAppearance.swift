@@ -168,24 +168,71 @@ final class CaptureGlassLabelView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// A normal color well with a deliberately small first-level palette. The
-/// inherited color/target/action API also keeps native color drag/drop intact.
+/// A scoped connection to the shared system picker, independent of native
+/// active-well state. It never shows the panel or persists any color history.
 @MainActor
-final class CaptureColorWell: NSColorWell, NSPopoverDelegate {
+final class CaptureSystemColorRelay {
+    private weak var panel: NSColorPanel?
+    private var observer: NSObjectProtocol?
+    private var onChange: ((NSColor) -> Void)?
+    private var lastColor: NSColor?
+    private var originalContinuous = false
+
+    func start(panel: NSColorPanel, onChange: @escaping (NSColor) -> Void) {
+        stop()
+        self.panel = panel
+        self.onChange = onChange
+        lastColor = panel.color.usingColorSpace(.sRGB)
+        originalContinuous = panel.isContinuous
+        panel.isContinuous = true
+        observer = NotificationCenter.default.addObserver(
+            forName: NSColorPanel.colorDidChangeNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flush() }
+        }
+    }
+
+    func flush() {
+        guard let color = panel?.color.usingColorSpace(.sRGB),
+              lastColor?.isEqual(color) != true else { return }
+        // Update before the callback: changing an active well can synchronously
+        // notify the native panel again. One change must be delivered once.
+        lastColor = color
+        onChange?(color)
+    }
+
+    func stop() {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+        panel?.isContinuous = originalContinuous
+        panel = nil
+        onChange = nil
+        lastColor = nil
+    }
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+    }
+}
+
+@MainActor
+/// A color well with a compact first-level palette and explicit color delivery.
+final class CaptureColorWell: NSColorWell {
     var onPaletteClose: (() -> Void)?
-    private var colorPopover: NSPopover?
+    var onColorChange: ((NSColor) -> Void)?
+    private var colorPalettePanel: NSPanel?
+    private var paletteClickMonitor: Any?
     private var systemPanelOriginalLevel: NSWindow.Level?
     private var systemPanelCloseObserver: NSObjectProtocol?
     private var applicationInactiveObserver: NSObjectProtocol?
     private var isOpeningSystemPanel = false
+    private var isOpeningPalette = false
+    private let systemColorRelay = CaptureSystemColorRelay()
 
-    var isPaletteOpen: Bool { colorPopover?.isShown == true || systemPanelOriginalLevel != nil }
+    var isPaletteOpen: Bool { isOpeningPalette || isOpeningSystemPanel || colorPalettePanel?.isVisible == true || systemPanelOriginalLevel != nil }
     var paletteWindow: NSWindow? {
-        // The old popover may still be animating closed after More Colors
-        // has already made the system panel key. Ownership follows the panel.
         if systemPanelOriginalLevel != nil { return NSColorPanel.shared }
-        if let colorPopover, colorPopover.isShown { return colorPopover.contentViewController?.view.window }
-        return nil
+        return colorPalettePanel
     }
 
     override init(frame frameRect: NSRect) {
@@ -200,6 +247,7 @@ final class CaptureColorWell: NSColorWell, NSPopoverDelegate {
     required init?(coder: NSCoder) { nil }
 
     deinit {
+        if let paletteClickMonitor { NSEvent.removeMonitor(paletteClickMonitor) }
         if let systemPanelCloseObserver { NotificationCenter.default.removeObserver(systemPanelCloseObserver) }
         if let applicationInactiveObserver { NotificationCenter.default.removeObserver(applicationInactiveObserver) }
     }
@@ -211,7 +259,7 @@ final class CaptureColorWell: NSColorWell, NSPopoverDelegate {
 
     override func deactivate() {
         let hadSystemPanel = systemPanelOriginalLevel != nil
-        colorPopover?.performClose(nil)
+        closeCompactPalette()
         restoreSystemPanel(hide: hadSystemPanel)
         super.deactivate()
     }
@@ -220,16 +268,25 @@ final class CaptureColorWell: NSColorWell, NSPopoverDelegate {
     /// raise of the shared system color panel is always restored here.
     func dismissPalette() {
         let hadSystemPanel = systemPanelOriginalLevel != nil
-        colorPopover?.performClose(nil)
+        let hadCompactPalette = colorPalettePanel != nil
+        closeCompactPalette()
         restoreSystemPanel(hide: hadSystemPanel)
         super.deactivate()
-        if hadSystemPanel { onPaletteClose?() }
+        if hadSystemPanel || hadCompactPalette { onPaletteClose?() }
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        // Do not enter NSColorWell's native popover/cell tracking loop. Our
+        // palette buttons own their clicks and deliver a color directly.
+        togglePalette(self)
     }
 
     @objc private func togglePalette(_ sender: Any?) {
-        guard isEnabled, !isHidden, window != nil else { return }
-        if colorPopover?.isShown == true {
-            colorPopover?.performClose(nil)
+        guard isEnabled, !isHidden, let owner = window else { return }
+        if colorPalettePanel != nil {
+            dismissPalette()
             return
         }
         if systemPanelOriginalLevel != nil {
@@ -239,28 +296,76 @@ final class CaptureColorWell: NSColorWell, NSPopoverDelegate {
         let controller = CaptureColorPaletteController(color: color)
         controller.onChooseColor = { [weak self] color in
             guard let self else { return }
-            self.color = color
-            self.sendAction(self.action, to: self.target)
-            self.colorPopover?.performClose(nil)
+            self.applyPickedColor(color)
+            self.dismissPalette()
         }
         controller.onMoreColors = { [weak self] in self?.showSystemPanel() }
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        popover.contentSize = NSSize(width: 212, height: 152)
-        popover.contentViewController = controller
-        popover.delegate = self
-        colorPopover = popover
+        let panel = CapturePalettePanel(
+            contentRect: NSRect(x: 0, y: 0, width: 212, height: 152),
+            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false
+        )
+        panel.isReleasedWhenClosed = false
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = true
+        panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.animationBehavior = .none
+        panel.level = NSWindow.Level(rawValue: owner.level.rawValue + 1)
+        panel.collectionBehavior = [.fullScreenAuxiliary]
+        panel.contentViewController = controller
+        panel.setContentSize(NSSize(width: 212, height: 152))
+        let anchor = owner.convertToScreen(convert(bounds, to: nil))
+        let visible = (owner.screen ?? NSScreen.main)?.visibleFrame.insetBy(dx: 8, dy: 8) ?? owner.frame
+        let size = panel.frame.size
+        let below = anchor.minY - size.height - 8
+        let y = below >= visible.minY ? below : anchor.maxY + 8
+        panel.setFrameOrigin(CGPoint(
+            x: min(max(anchor.midX - size.width / 2, visible.minX), visible.maxX - size.width),
+            y: min(max(y, visible.minY), visible.maxY - size.height)
+        ))
+        colorPalettePanel = panel
+        owner.addChildWindow(panel, ordered: .above)
+        paletteClickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self, weak panel] event in
+            guard let self, let panel, panel.isVisible else { return event }
+            if event.window === panel { return event }
+            if event.window === self.window,
+               self.bounds.contains(self.convert(event.locationInWindow, from: nil)) { return event }
+            self.dismissPalette()
+            return event
+        }
         observeApplicationDeactivation()
-        popover.show(relativeTo: bounds, of: self, preferredEdge: .maxY)
+        isOpeningPalette = true
+        defer { isOpeningPalette = false }
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.orderFront(nil)
+    }
+
+    private func closeCompactPalette() {
+        if let paletteClickMonitor {
+            NSEvent.removeMonitor(paletteClickMonitor)
+            self.paletteClickMonitor = nil
+        }
+        guard let panel = colorPalettePanel else { return }
+        colorPalettePanel = nil
+        panel.parent?.removeChildWindow(panel)
+        panel.orderOut(nil)
+        panel.contentViewController = nil
+        panel.close()
     }
 
     private func showSystemPanel() {
         isOpeningSystemPanel = true
-        colorPopover?.performClose(nil)
-        super.activate(true)
+        closeCompactPalette()
         let panel = NSColorPanel.shared
         systemPanelOriginalLevel = panel.level
+        // The custom popover does not activate the native well. Explicitly
+        // bridge the system picker instead of relying on that active-well link.
+        panel.color = color
+        systemColorRelay.start(panel: panel) { [weak self] color in
+            self?.applyPickedColor(color)
+        }
         if let ownerWindow = window {
             panel.level = NSWindow.Level(rawValue: max(panel.level.rawValue, ownerWindow.level.rawValue + 1))
         }
@@ -276,12 +381,14 @@ final class CaptureColorWell: NSColorWell, NSPopoverDelegate {
 
     private func systemPanelClosing() {
         guard systemPanelOriginalLevel != nil else { return }
+        systemColorRelay.flush()
         restoreSystemPanel(hide: false)
         super.deactivate()
         onPaletteClose?()
     }
 
     private func restoreSystemPanel(hide: Bool) {
+        systemColorRelay.stop()
         guard let originalLevel = systemPanelOriginalLevel else {
             stopObservingIfClosed()
             return
@@ -297,6 +404,15 @@ final class CaptureColorWell: NSColorWell, NSPopoverDelegate {
         stopObservingIfClosed()
     }
 
+    func applyPickedColor(_ pickedColor: NSColor) {
+        guard let resolved = pickedColor.usingColorSpace(.sRGB) else { return }
+        color = resolved
+        // Pass the value itself. Focus/style callbacks may refresh the well
+        // synchronously; consumers must not have to read that mutable UI state.
+        if let onColorChange { onColorChange(resolved) }
+        else { _ = sendAction(action, to: target) }
+    }
+
     private func observeApplicationDeactivation() {
         guard applicationInactiveObserver == nil else { return }
         applicationInactiveObserver = NotificationCenter.default.addObserver(
@@ -307,19 +423,19 @@ final class CaptureColorWell: NSColorWell, NSPopoverDelegate {
     }
 
     private func stopObservingIfClosed() {
-        guard colorPopover?.isShown != true, systemPanelOriginalLevel == nil else { return }
+        guard colorPalettePanel == nil, systemPanelOriginalLevel == nil else { return }
         if let applicationInactiveObserver {
             NotificationCenter.default.removeObserver(applicationInactiveObserver)
             self.applicationInactiveObserver = nil
         }
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        guard notification.object as? NSPopover === colorPopover else { return }
-        colorPopover = nil
-        stopObservingIfClosed()
-        if !isOpeningSystemPanel, systemPanelOriginalLevel == nil { onPaletteClose?() }
-    }
+}
+
+@MainActor
+private final class CapturePalettePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
 @MainActor
@@ -393,7 +509,9 @@ private final class CaptureColorPaletteController: NSViewController {
             && abs(first.blueComponent - second.blueComponent) < 0.01
     }
 
-    @objc private func pickColor(_ sender: NSButton) { onChooseColor?(choices[sender.tag].1) }
+    @objc private func pickColor(_ sender: NSButton) {
+        onChooseColor?(choices[sender.tag].1)
+    }
     @objc private func moreColors(_ sender: NSButton) { onMoreColors?() }
 }
 
@@ -417,6 +535,7 @@ private final class CaptureColorSwatchButton: NSButton {
     }
 
     required init?(coder: NSCoder) { nil }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         let circle = NSBezierPath(ovalIn: bounds.insetBy(dx: 5, dy: 5))
